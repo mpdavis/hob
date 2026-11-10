@@ -1,0 +1,31 @@
+[project]
+name = "hob"
+version = "1.0.0"
+description = "The homelab's SRE agent"
+requires-python = ">=3.12"
+dependencies = [
+    "claude-agent-sdk>=0.2.180,<0.3",
+    "discord.py>=2.7,<3",
+    "httpx>=0.28,<1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10"]
+
+[project.scripts]
+hob = "hob.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["hob*"]
+
+[tool.setuptools.package-data]
+hob = ["prompt.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--import-mode=importlib"
+filterwarnings = ["error"]
