@@ -6,7 +6,7 @@ the phases it is built in — is `docs/sre-agent.md` in
 
 ## `hob run`
 
-Phase 2: read-only investigation. Hob is a Discord bot watching the
+Phases 2 and 3: investigation, and fixes as pull requests. Hob is a Discord bot watching the
 `#homelab-alerts` forum, where Grafana IRM opens one post per alert group
 (`tofu/grafana/irm.tf` in homelab).
 
@@ -22,14 +22,22 @@ Phase 2: read-only investigation. Hob is a Discord bot watching the
 Only `HOB_DISCORD_ALLOWED_USER_IDS` can start or steer an investigation.
 
 The agent is the Claude Agent SDK, run on a clone of homelab (synced before
-every run) with only `Read`, `Grep` and `Glob` built in, plus four tools of
-its own:
+every run) with only `Read`, `Grep` and `Glob` built in, plus tools of its
+own:
 
 | Tool | Reaches |
 |---|---|
 | `prometheus_query`, `loki_query` | Grafana Cloud, through the datasource proxy with a Viewer token |
 | `gatus_failing` | Gatus's status API |
 | `host_command` | `ssh hob@<host> <verb> <args>`, which the host's `hob-action` forced command allowlists |
+| `open_pull_request`, `update_pull_request` | GitHub, as the `hob-homelab` App; only when it is configured |
+
+The pull-request tools take the change as edits (`old_string` → `new_string`,
+matched exactly once), whole files or deletions, and commit them through the
+Git Data API onto a `hob/…` branch, so the agent never needs a writable
+checkout. Each run mints an installation token narrowed to homelab with
+`contents` and `pull_requests` write. They refuse paths under `.github/` and
+will only add commits to open PRs on `hob/` branches. Merging is the human's.
 
 Everything else Claude Code ships — Bash, Edit, Write, web access — is
 absent, and `permission_mode` is `dontAsk`, so anything not allowed is
@@ -71,6 +79,9 @@ Arguments match `^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,127}$`.
 | `HOB_DAILY_BUDGET_USD` | `10` | Runs are refused once a UTC day reaches it |
 | `HOB_REPO_URL` / `HOB_REPO_DIR` | homelab / `/data/homelab` | |
 | `HOB_DB_PATH` | `/data/hob.db` | |
+| `HOB_GITHUB_APP_ID` / `HOB_GITHUB_INSTALLATION_ID` | unset | Both, plus the key, enable the pull-request tools |
+| `HOB_GITHUB_APP_KEY` | unset | The App's private key (PEM) |
+| `HOB_GITHUB_REPO` / `HOB_GITHUB_BASE` | `mpdavis/homelab` / `main` | |
 
 `/data` is `HOME`, so the clone, the SQLite state and the SDK's session
 transcripts share one volume.

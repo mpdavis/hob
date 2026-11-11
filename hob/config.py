@@ -42,6 +42,12 @@ class Config:
     max_budget_usd: float
     daily_budget_usd: float
     db_path: str
+    # The GitHub App. Without it Hob stays read-only and has no PR tools.
+    github_app_id: int | None = None
+    github_installation_id: int | None = None
+    github_app_key: str | None = None
+    github_repo: str = "mpdavis/homelab"
+    github_base: str = "main"
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -69,4 +75,13 @@ class Config:
             max_budget_usd=float(env("HOB_MAX_BUDGET_USD", "2")),
             daily_budget_usd=float(env("HOB_DAILY_BUDGET_USD", "10")),
             db_path=env("HOB_DB_PATH", "/data/hob.db"),
+            github_app_id=int(env("HOB_GITHUB_APP_ID") or 0) or None,
+            github_installation_id=int(env("HOB_GITHUB_INSTALLATION_ID") or 0) or None,
+            github_app_key=env("HOB_GITHUB_APP_KEY") or None,
+            github_repo=env("HOB_GITHUB_REPO", "mpdavis/homelab"),
+            github_base=env("HOB_GITHUB_BASE", "main"),
         )
+
+    @property
+    def github_enabled(self) -> bool:
+        return bool(self.github_app_id and self.github_installation_id and self.github_app_key)

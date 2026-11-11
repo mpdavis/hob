@@ -7,6 +7,7 @@ dependencies = [
     "claude-agent-sdk>=0.2.180,<0.3",
     "discord.py>=2.7,<3",
     "httpx>=0.28,<1",
+    "pyjwt[crypto]>=2.15,<3",
 ]
 
 [project.optional-dependencies]

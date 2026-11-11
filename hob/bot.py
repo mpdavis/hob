@@ -134,8 +134,8 @@ class Hob(discord.Client):
             model = self.config.escalation_model if escalate else self.config.model
             opts = agent.options(
                 repo_dir=self.config.repo_dir,
-                tool_server=self.tools.server(),
-                tool_names=Tools.names(),
+                tool_server=self.tools.server(thread_url=thread.jump_url),
+                tool_names=self.tools.names(),
                 model=model,
                 max_turns=self.config.max_turns,
                 max_budget_usd=self.config.max_budget_usd,
