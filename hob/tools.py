@@ -1,6 +1,7 @@
-"""The tools Hob's agent gets beyond reading the homelab repo. All read-only:
-the Grafana token is a Viewer, Gatus is public, and host commands go through
-the hob-action allowlist."""
+"""The tools Hob's agent gets beyond reading the homelab repo. Everything but
+the pull-request tools is read-only: the Grafana token is a Viewer, Gatus is
+public, and host commands go through the hob-action allowlist. Pull requests
+change nothing until a human merges them."""
 
 import json
 import time
@@ -11,6 +12,7 @@ from claude_agent_sdk import create_sdk_mcp_server, tool
 
 from hob import hostcmd
 from hob.config import Config
+from hob.github import ChangeError, GitHub
 
 SERVER = "hob"
 OUTPUT_LIMIT = 20_000
@@ -45,10 +47,52 @@ def failing_endpoints(statuses: list[dict]) -> str:
     return f"{len(failing)} of {len(statuses)} Gatus endpoints failing:\n" + "\n".join(failing)
 
 
+READ_ONLY = ("prometheus_query", "loki_query", "gatus_failing", "host_command")
+PULL_REQUESTS = ("open_pull_request", "update_pull_request")
+
+CHANGES_SCHEMA = {
+    "type": "array",
+    "description": "Each item changes one file. Edit: path, old_string (must match exactly once, "
+    "copied from the file as it is on main) and new_string. Whole file: path and content. "
+    "Remove: path and delete: true.",
+    "items": {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string"},
+            "old_string": {"type": "string"},
+            "new_string": {"type": "string"},
+            "content": {"type": "string"},
+            "delete": {"type": "boolean"},
+        },
+        "required": ["path"],
+    },
+}
+
+
+def provenance(thread_url: str | None) -> str:
+    where = f"[this alert thread]({thread_url})" if thread_url else "an alert thread"
+    return f"\n\n---\nOpened by Hob from {where}. Review it like any other PR; Hob cannot merge."
+
+
 class Tools:
-    def __init__(self, config: Config, http: httpx.AsyncClient | None = None):
+    def __init__(
+        self,
+        config: Config,
+        http: httpx.AsyncClient | None = None,
+        github: GitHub | None = None,
+    ):
         self.config = config
         self.http = http or httpx.AsyncClient(timeout=30)
+        if github is None and config.github_enabled:
+            github = GitHub(
+                app_id=config.github_app_id or 0,
+                installation_id=config.github_installation_id or 0,
+                private_key=config.github_app_key or "",
+                repo=config.github_repo,
+                base=config.github_base,
+                http=self.http,
+            )
+        self.github = github
 
     async def _grafana(self, uid: str, path: str, params: dict) -> dict:
         response = await self.http.get(
@@ -131,7 +175,33 @@ class Tools:
             return _error(str(e))
         return _text(out or "(no output)")
 
-    def server(self):
+    async def open_pr(self, args: dict, thread_url: str | None = None) -> dict:
+        if self.github is None:
+            return _error("pull requests are not configured")
+        try:
+            pr = await self.github.open_pull_request(
+                args["title"], args["body"] + provenance(thread_url), args["changes"]
+            )
+        except ChangeError as e:
+            return _error(f"nothing was committed: {e}")
+        except (httpx.HTTPError, RuntimeError, KeyError) as e:
+            return _error(f"opening the pull request failed: {e}")
+        return _text(f"Opened #{pr.number}: {pr.url} (branch {pr.branch})")
+
+    async def update_pr(self, args: dict) -> dict:
+        if self.github is None:
+            return _error("pull requests are not configured")
+        try:
+            pr = await self.github.update_pull_request(
+                int(args["number"]), args["message"], args["changes"]
+            )
+        except ChangeError as e:
+            return _error(f"nothing was committed: {e}")
+        except (httpx.HTTPError, RuntimeError, KeyError, ValueError) as e:
+            return _error(f"updating the pull request failed: {e}")
+        return _text(f"Pushed to #{pr.number}: {pr.url}")
+
+    def server(self, thread_url: str | None = None):
         host_names = sorted(self.config.hosts)
         definitions = [
             tool(
@@ -186,11 +256,46 @@ class Tools:
                 },
             )(self.host),
         ]
+        if self.github is not None:
+
+            async def open_pr(args: dict) -> dict:
+                return await self.open_pr(args, thread_url)
+
+            definitions += [
+                tool(
+                    "open_pull_request",
+                    "Open a pull request against main in the homelab repository with the given "
+                    "file changes, committed as hob-homelab[bot]. Nothing changes until a human "
+                    "merges it. Files under .github/ cannot be changed. The body should say what "
+                    "was wrong, the evidence, and what the change does.",
+                    {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                            "body": {"type": "string"},
+                            "changes": CHANGES_SCHEMA,
+                        },
+                        "required": ["title", "body", "changes"],
+                    },
+                )(open_pr),
+                tool(
+                    "update_pull_request",
+                    "Add a commit to a pull request you opened earlier (its branch starts with "
+                    "hob/). Edits apply to the branch as it is now, including your earlier "
+                    "commits, not to main.",
+                    {
+                        "type": "object",
+                        "properties": {
+                            "number": {"type": "integer"},
+                            "message": {"type": "string"},
+                            "changes": CHANGES_SCHEMA,
+                        },
+                        "required": ["number", "message", "changes"],
+                    },
+                )(self.update_pr),
+            ]
         return create_sdk_mcp_server(SERVER, tools=definitions)
 
-    @staticmethod
-    def names() -> list[str]:
-        return [
-            f"mcp__{SERVER}__{name}"
-            for name in ("prometheus_query", "loki_query", "gatus_failing", "host_command")
-        ]
+    def names(self) -> list[str]:
+        names = READ_ONLY + (PULL_REQUESTS if self.github is not None else ())
+        return [f"mcp__{SERVER}__{name}" for name in names]

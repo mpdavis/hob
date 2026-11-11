@@ -111,14 +111,29 @@ def test_host_command_rejects_unknown_host_and_verb():
 
 
 def test_server_exposes_the_named_tools():
-    server = tools_with(lambda r: httpx.Response(200)).server()
+    tools = tools_with(lambda r: httpx.Response(200))
+    server = tools.server()
     assert server["type"] == "sdk" and server["name"] == "hob"
-    assert Tools.names() == [
+    assert tools.names() == [
         "mcp__hob__prometheus_query",
         "mcp__hob__loki_query",
         "mcp__hob__gatus_failing",
         "mcp__hob__host_command",
     ]
+
+
+def test_pull_request_tools_only_with_the_github_app():
+    with_app = Tools(
+        config(github_app_id=1, github_installation_id=2, github_app_key="pem"),
+        httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(500))),
+    )
+    assert with_app.names()[-2:] == [
+        "mcp__hob__open_pull_request",
+        "mcp__hob__update_pull_request",
+    ]
+    without = tools_with(lambda r: httpx.Response(500))
+    result = asyncio.run(without.open_pr({"title": "t", "body": "b", "changes": []}))
+    assert result["is_error"] and "not configured" in text(result)
 
 
 def test_store_sessions_and_spend(tmp_path):
